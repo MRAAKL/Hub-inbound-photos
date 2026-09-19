@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inbound photo capture</title>
+<style>
+:root{
+  --bg:#f5f4f0; --surface:#ffffff; --surface-2:#f0efe9;
+  --text:#1a1a18; --text-2:#5f5e5a; --text-3:#888780;
+  --border:#e0dfd8; --border-strong:#c8c6bd;
+  --accent:#185fa5; --accent-bg:#e6f1fb;
+  --success:#0f6e56; --success-bg:#e1f5ee;
+  --danger:#a32d2d; --danger-bg:#fcebeb;
+  --radius:8px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#18181a; --surface:#242426; --surface-2:#2c2c2e;
+    --text:#f0efe9; --text-2:#b4b2a9; --text-3:#888780;
+    --border:#3a3a3c; --border-strong:#4a4a4c;
+    --accent:#85b7eb; --accent-bg:#0c447c;
+    --success:#5dcaa5; --success-bg:#085041;
+    --danger:#f09595; --danger-bg:#791f1f;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#18181a; --surface:#242426; --surface-2:#2c2c2e;
+  --text:#f0efe9; --text-2:#b4b2a9; --text-3:#888780;
+  --border:#3a3a3c; --border-strong:#4a4a4c;
+  --accent:#85b7eb; --accent-bg:#0c447c;
+  --success:#5dcaa5; --success-bg:#085041;
+  --danger:#f09595; --danger-bg:#791f1f;
+}
+*{box-sizing:border-box;}
+body{margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+#app{max-width:480px; margin:0 auto; padding:20px 16px 60px;}
+h1{font-size:16px; font-weight:600; margin:0 0 2px;}
+.muted{color:var(--text-2); font-size:13px;}
+.tiny{color:var(--text-3); font-size:12px;}
+input[type=text]{width:100%; height:40px; padding:0 12px; border:1px solid var(--border-strong); border-radius:var(--radius); background:var(--surface); color:var(--text); font-size:14px;}
+button{height:40px; padding:0 16px; border-radius:var(--radius); border:1px solid var(--border-strong); background:var(--surface); color:var(--text); font-size:14px; cursor:pointer;}
+button:active{transform:scale(0.98);}
+button.primary{background:var(--accent); color:#fff; border-color:var(--accent);}
+button.small{height:32px; padding:0 10px; font-size:12px;}
+button:disabled{opacity:0.45; cursor:not-allowed;}
+.card{border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--surface);}
+.row{display:flex; align-items:center; gap:10px; padding:12px; border-bottom:1px solid var(--border); cursor:pointer;}
+.row:last-child{border-bottom:none;}
+.row:active{background:var(--surface-2);}
+.dot{width:20px; height:20px; border-radius:50%; border:2px solid var(--border-strong); flex-shrink:0;}
+.dot.done{background:var(--success); border-color:var(--success); position:relative;}
+.dot.done::after{content:'\2713'; color:#fff; font-size:12px; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;}
+.slot{display:flex; align-items:center; gap:12px; padding:12px; border:1px solid var(--border); border-radius:var(--radius); margin-bottom:8px; cursor:pointer; background:var(--surface);}
+.slot img{width:44px; height:44px; object-fit:cover; border-radius:6px; flex-shrink:0;}
+.slot .ph{width:44px; height:44px; border-radius:6px; background:var(--surface-2); flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-3); font-size:18px;}
+.overlay{position:relative; min-height:100vh; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.5); padding:20px;}
+.modal{background:var(--surface); border-radius:12px; padding:20px; width:100%; max-width:320px;}
+.grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:14px;}
+.thumb{aspect-ratio:1; border-radius:var(--radius); background:var(--surface-2); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; cursor:pointer; padding:6px; text-align:center; overflow:hidden; position:relative;}
+.thumb img{position:absolute; inset:0; width:100%; height:100%; object-fit:cover;}
+.thumb .lbl{position:relative; z-index:1; font-size:10px; background:rgba(0,0,0,0.55); color:#fff; padding:2px 4px; border-radius:4px;}
+.err{color:var(--danger); font-size:13px; margin-top:8px; display:none;}
+.badge{font-size:11px; padding:2px 8px; border-radius:20px; background:var(--success-bg); color:var(--success);}
+.banner{background:var(--accent-bg); color:var(--accent); font-size:13px; padding:10px 12px; border-radius:var(--radius); margin-bottom:14px;}
+.skurow{border:1px solid var(--border); border-radius:var(--radius); padding:10px; margin-bottom:8px; display:flex; gap:8px; align-items:flex-start;}
+.skurow input{margin-bottom:6px;}
+.skurow .fields{flex:1;}
+.field{margin-bottom:14px;}
+.field p{margin:0 0 4px;}
+.choicebtn{width:100%; text-align:left; padding:16px; margin-bottom:10px; display:flex; align-items:center; gap:12px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <p class="tiny" style="text-align:center; margin-top:40px;">Loading...</p>
+</div>
+<input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none">
+<input type="file" id="pdfInput" accept="application/pdf" style="display:none">
+
+<!-- Firebase (Firestore) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+/* ================= Hub Distributors config ================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyBTGs7OeGLw0RKkFKksPQ12PBAJvIbRdYY",
+  authDomain: "hub-inbound-aade7.firebaseapp.com",
+  projectId: "hub-inbound-aade7",
+  storageBucket: "hub-inbound-aade7.firebasestorage.app",
+  messagingSenderId: "38759196012",
+  appId: "1:38759196012:web:92001a63a2bb6a0dc57f49"
+};
+const CLOUDINARY_CLOUD = "cce8rtos";
+const CLOUDINARY_PRESET = "hub-inbound";
+/* ============================================================= */
+
+const NAMES3 = ['Product','Outer label','Inner label'];
+const NAMES5 = ['Safety mark','Outer label','Inner label','Front plug','Back plug'];
+
+let cap = {db:null, assets:null, downloads:null};
+let state = {screen:'landing', asn:'', container:'', skus:[], activeCode:null, classifyFor:null, reviewSlot:null, pendingSlotIndex:null, extracted:null, parseError:'', lookupErr:''};
+
+function guessPlug(desc){ return /iron|vacuum|blender|kettle|steam|power|bagless|mixer|toaster/i.test(desc); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function esc2(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function sanId(s){ return String(s).trim().replace(/[^A-Za-z0-9_\-.~:@+]/g,'_'); }
+
+const app = document.getElementById('app');
+const fileInput = document.getElementById('fileInput');
+const pdfInput = document.getElementById('pdfInput');
+
+/* ---------- Cloudinary upload (replaces Claude's assets capability) ---------- */
+async function cloudinaryUpload(file){
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('upload_preset', CLOUDINARY_PRESET);
+  const resp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {
+    method: 'POST',
+    body: fd
+  });
+  if(!resp.ok){
+    let msg = 'Upload failed (' + resp.status + ')';
+    try{ const j = await resp.json(); if(j && j.error && j.error.message) msg = j.error.message; }catch(e){}
+    throw new Error(msg);
+  }
+  const json = await resp.json();
+  return { id: json.public_id, url: json.secure_url };
+}
+
+/* ---------- local "save to phone" (replaces Claude's downloads capability) ---------- */
+async function localSave(filename, blob){
+  try{
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = u; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(u), 30000);
+    return true;
+  }catch(e){ return false; }
+}
+
+/* ---------- PDF parsing ---------- */
+async function extractPdfText(file){
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+  let text = '';
+  for(let i=1;i<=pdf.numPages;i++){
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(it=>it.str).join(' ') + '\n';
+  }
+  return text;
+}
+function parseAsnText(text){
+  const asnMatch = text.match(/ASN\s*No\s*:?\s*(\d+)/i);
+  const containerMatch = text.match(/Container\s*No\s*:?\s*([A-Z]{4}\s?\d{6,7})/i);
+  const skus = [];
+  const re = /(\d{7,10})\s+([A-Za-z0-9][\w\-\/.,&+' ]{3,90}?)\s+(1\s*CTN\s*=\s*\d+\s*PCS)\s+([\d,]+)\s*PCS\b(?:[\s\S]{0,40}?\b(NM|NW|CL)\b)?/g;
+  let m, seen = new Set();
+  while((m = re.exec(text))){
+    const code = m[1];
+    if(seen.has(code)) continue;
+    seen.add(code);
+    skus.push({code, desc:m[2].trim().replace(/\s+/g,' '), packSize:m[3].replace(/\s+/g,' '), qty:m[4].replace(/,/g,''), status:m[5]||'NM'});
+  }
+  return { asn: asnMatch?asnMatch[1]:'', container: containerMatch?containerMatch[1].replace(/\s+/g,''):'', skus };
+}
+
+/* ---------- db helpers (Firestore, path-based refs) ---------- */
+function asnDoc(asn){ return cap.db.doc('asns/'+sanId(asn)); }
+function skusCol(asn){ return cap.db.collection('asns/'+sanId(asn)+'/skus'); }
+
+async function saveAsn(asn, container, skuRows){
+  await asnDoc(asn).set({asn, container: container||'', lines: skuRows.length, createdAt: new Date().toISOString()});
+  for(const s of skuRows){
+    await skusCol(asn).doc(sanId(s.code)).set({
+      code:s.code, desc:s.desc||'', packSize:s.packSize||'', qty:s.qty||'', status:s.status||'NM',
+      done:false, photoCount:null, slots:null
+    });
+  }
+}
+
+async function loadSkus(asn){
+  const snap = await skusCol(asn).get();
+  return snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+
+async function goToList(){
+  try{ state.skus = await loadSkus(state.asn); }catch(e){}
+  state.screen = 'list';
+  render();
+}
+
+async function saveToPhone(file, label){
+  if(!cap.downloads) return false;
+  try{
+    await cap.downloads.save({filename: (label||'photo').replace(/\s+/g,'_')+'_'+Date.now()+'.jpg', data: file});
+    return true;
+  }catch(e){ return false; }
+}
+
+function openCamera(slotIndex){
+  state.pendingSlotIndex = slotIndex;
+  fileInput.click();
+}
+
+fileInput.onchange = async (e)=>{
+  const f = e.target.files[0];
+  if(!f || state.pendingSlotIndex===null) return;
+  const idx = state.pendingSlotIndex;
+  state.pendingSlotIndex = null;
+  fileInput.value = '';
+  const s = state.skus.find(x=>x.code===state.activeCode);
+  s.slots[idx].uploading = true;
+  render();
+  try{
+    const up = await cap.assets.upload(f);
+    const fresh = await skusCol(state.asn).doc(sanId(s.code)).get();
+    const freshSlots = (fresh.data() && fresh.data().slots) ? fresh.data().slots : s.slots.map(sl=>({name:sl.name, assetId:sl.assetId||null, url:sl.url||null}));
+    freshSlots[idx] = {name: s.slots[idx].name, assetId: up.id, url: up.url};
+    await skusCol(state.asn).doc(sanId(s.code)).update({slots: freshSlots});
+    s.slots[idx].assetId = up.id;
+    s.slots[idx].url = up.url;
+    s.slots[idx].uploading = false;
+  }catch(err){
+    s.slots[idx].uploading = false;
+    s.slots[idx].uploadError = true;
+    s.slots[idx].localOnly = f;
+    await saveToPhone(f, s.code+'_'+s.slots[idx].name);
+    s.slots[idx].savedLocally = true;
+  }
+  render();
+};
+
+pdfInput.onchange = async (e)=>{
+  const f = e.target.files[0];
+  if(!f) return;
+  const statusEl = document.getElementById('uploadStatus');
+  if(statusEl) statusEl.textContent = 'Reading document...';
+  try{
+    const text = await extractPdfText(f);
+    const parsed = parseAsnText(text);
+    if(!parsed.skus.length){ state.parseError = 'Could not find any SKU lines in this document. Add rows manually below.'; }
+    else { state.parseError = ''; }
+    state.extracted = parsed;
+    state.screen = 'confirm';
+    render();
+  }catch(err){
+    state.parseError = 'Could not read that PDF. Try a different file, or enter details manually.';
+    state.extracted = {asn:'', container:'', skus:[]};
+    state.screen = 'confirm';
+    render();
+  }
+};
+
+function render(){
+  if(state.screen==='landing'){
+    app.innerHTML = `
+      <h1>Inbound photo capture</h1>
+      <p class="muted" style="margin:0 0 18px;">Choose what you're here to do.</p>
+      <button class="choicebtn" id="goUpload"><span style="font-size:20px;">&#128196;</span><span><b style="display:block; font-size:14px;">Upload an ASN</b><span class="tiny">Enter or upload the document for a new container</span></span></button>
+      <button class="choicebtn" id="goLookup"><span style="font-size:20px;">&#128247;</span><span><b style="display:block; font-size:14px;">Take photos</b><span class="tiny">Enter an ASN number to start capturing</span></span></button>
+    `;
+    document.getElementById('goUpload').onclick = ()=>{ state.screen='upload'; render(); };
+    document.getElementById('goLookup').onclick = ()=>{ state.screen='lookup'; state.lookupErr=''; render(); };
+    return;
+  }
+
+  if(state.screen==='upload'){
+    app.innerHTML = `
+      <h1>Upload an ASN</h1>
+      <p class="muted" style="margin:0 0 18px;">Upload the ASN document, or skip and enter details by hand.</p>
+      <button class="primary" id="pickPdfBtn" style="width:100%;">Choose ASN PDF</button>
+      <p id="uploadStatus" class="tiny" style="margin-top:10px;"></p>
+      <button id="manualBtn" style="width:100%; margin-top:20px;">Skip &mdash; enter details manually</button>
+      <button id="backLanding1" style="width:100%; margin-top:10px;">Back</button>
+    `;
+    document.getElementById('pickPdfBtn').onclick = ()=> pdfInput.click();
+    document.getElementById('manualBtn').onclick = ()=>{
+      state.extracted = {asn:'', container:'', skus:[]};
+      state.parseError = '';
+      state.screen = 'confirm';
+      render();
+    };
+    document.getElementById('backLanding1').onclick = ()=>{ state.screen='landing'; render(); };
+    return;
+  }
+
+  if(state.screen==='confirm'){
+    const ex = state.extracted || {asn:'', container:'', skus:[]};
+    app.innerHTML = `
+      <h1>Check details before saving</h1>
+      <p class="muted" style="margin:0 0 14px;">This is what other people will see when they enter this ASN number to take photos.</p>
+      ${state.parseError ? `<p class="err" style="display:block;">${esc2(state.parseError)}</p>` : ''}
+      <div class="field"><p class="tiny">ASN number (top right of the document)</p><input type="text" id="asnField" value="${esc2(ex.asn)}"></div>
+      <div class="field"><p class="tiny">Container number (left side &mdash; optional, not needed by photo takers)</p><input type="text" id="containerField" value="${esc2(ex.container)}"></div>
+      <p class="tiny">Lines: ${ex.skus.length}</p>
+      <div id="skuEditList" style="margin-top:10px;"></div>
+      <button class="small" id="addSkuBtn" style="margin-bottom:14px;">+ Add SKU</button><br>
+      <button class="primary" id="saveBtn" style="width:100%;">Save ASN</button>
+      <p class="err" id="saveErr">Enter an ASN number and at least one SKU with a product code.</p>
+      <p id="saveMsg" class="tiny" style="margin-top:8px;"></p>
+      <button id="backUploadBtn" style="width:100%; margin-top:10px;">Back</button>
+    `;
+    const listEl = document.getElementById('skuEditList');
+    function drawSkuRows(){
+      listEl.innerHTML = '';
+      ex.skus.forEach((s,i)=>{
+        const d = document.createElement('div');
+        d.className = 'skurow';
+        d.innerHTML = `
+          <div class="fields">
+            <input type="text" placeholder="Product code" value="${esc2(s.code)}" data-f="code" data-i="${i}" style="margin-bottom:6px;">
+            <input type="text" placeholder="Description" value="${esc2(s.desc)}" data-f="desc" data-i="${i}" style="margin-bottom:6px;">
+            <div style="display:flex; gap:6px;">
+              <input type="text" placeholder="Pack size" value="${esc2(s.packSize||'')}" data-f="packSize" data-i="${i}">
+              <input type="text" placeholder="Qty" value="${esc2(s.qty||'')}" data-f="qty" data-i="${i}">
+              <input type="text" placeholder="Status" value="${esc2(s.status||'NM')}" data-f="status" data-i="${i}">
+            </div>
+          </div>
+          <button class="small" data-del="${i}">Remove</button>
+        `;
+        listEl.appendChild(d);
+      });
+      listEl.querySelectorAll('input').forEach(inp=>{
+        inp.oninput = ()=>{ ex.skus[+inp.dataset.i][inp.dataset.f] = inp.value; };
+      });
+      listEl.querySelectorAll('[data-del]').forEach(btn=>{
+        btn.onclick = ()=>{ ex.skus.splice(+btn.dataset.del,1); drawSkuRows(); document.querySelector('.tiny').textContent='Lines: '+ex.skus.length; };
+      });
+    }
+    drawSkuRows();
+    document.getElementById('addSkuBtn').onclick = ()=>{ ex.skus.push({code:'',desc:'',packSize:'',qty:'',status:'NM'}); drawSkuRows(); };
+    document.getElementById('backUploadBtn').onclick = ()=>{ state.screen='upload'; render(); };
+    document.getElementById('saveBtn').onclick = async ()=>{
+      const asn = document.getElementById('asnField').value.trim();
+      const container = document.getElementById('containerField').value.trim();
+      const validSkus = ex.skus.filter(s=>s.code && s.code.trim());
+      if(!asn || !validSkus.length){ document.getElementById('saveErr').style.display='block'; return; }
+      document.getElementById('saveMsg').textContent = 'Saving...';
+      try{
+        await saveAsn(asn, container, validSkus);
+        document.getElementById('saveMsg').textContent = 'Saved. Photo takers can now enter ASN ' + asn + '.';
+      }catch(err){
+        document.getElementById('saveMsg').textContent = 'Could not save (' + (err && err.code || err.message || 'unknown error') + '). Check your connection and try again.';
+      }
+    };
+    return;
+  }
+
+  if(state.screen==='lookup'){
+    app.innerHTML = `
+      <h1>Take photos</h1>
+      <p class="muted" style="margin:0 0 18px;">Enter the ASN number for this container.</p>
+      <input type="text" id="asnLookup" placeholder="ASN number" value="${esc2(state.asn)}" style="margin-bottom:12px;">
+      <button class="primary" id="findBtn" style="width:100%;">Find ASN</button>
+      <p class="err" id="lookupErr" style="${state.lookupErr?'display:block;':''}">${esc2(state.lookupErr)}</p>
+      <button id="backLanding2" style="width:100%; margin-top:16px;">Back</button>
+    `;
+    document.getElementById('backLanding2').onclick = ()=>{ state.screen='landing'; render(); };
+    document.getElementById('findBtn').onclick = async ()=>{
+      const asn = document.getElementById('asnLookup').value.trim();
+      const btn = document.getElementById('findBtn');
+      const errEl = document.getElementById('lookupErr');
+      errEl.style.display='none';
+      if(!asn){ errEl.textContent='Enter an ASN number.'; errEl.style.display='block'; return; }
+      btn.disabled = true; btn.textContent = 'Looking up...';
+      try{
+        const snap = await asnDoc(asn).get();
+        if(!snap.exists){
+          state.lookupErr = 'ASN ' + asn + ' has not been uploaded yet. Ask whoever handles receiving to add it first.';
+          state.screen = 'lookup';
+          render();
+          return;
+        }
+        state.asn = asn;
+        state.container = snap.data().container || '';
+        state.skus = (await loadSkus(asn)).map(s=>({...s, slots: s.slots || null}));
+        state.lookupErr = '';
+        state.screen = 'list';
+        render();
+      }catch(err){
+        state.lookupErr = 'Could not reach the shared list right now. Check your connection and try again.';
+        render();
+      }
+    };
+    return;
+  }
+
+  if(state.screen==='list'){
+    const pending = state.skus.filter(s=>!s.done);
+    const done = state.skus.filter(s=>s.done);
+    const allDone = state.skus.length>0 && pending.length===0;
+    const row = (s)=>`
+      <div class="row" data-code="${esc2(s.code)}">
+        <div class="dot ${s.done?'done':''}"></div>
+        <div style="flex:1;">
+          <p style="margin:0; font-size:13px;">${esc(s.desc)}</p>
+          <p class="tiny" style="margin:2px 0 0;">${esc(s.code)}${s.qty?' &middot; qty '+esc(s.qty):''}</p>
+        </div>
+        ${s.done?'<span class="badge">Done</span>':'<span class="tiny">&rsaquo;</span>'}
+      </div>`;
+    const total = state.skus.length;
+    const pct = total ? Math.round((done.length/total)*100) : 0;
+    app.innerHTML = `
+      <p class="tiny" style="margin:0 0 2px;">ASN ${esc2(state.asn)}</p>
+      <h1 style="margin-bottom:6px;">SKU checklist</h1>
+      <p class="tiny" style="margin:0 0 6px;">${done.length} of ${total} done</p>
+      <div style="height:6px; border-radius:3px; background:var(--surface-2); overflow:hidden; margin-bottom:14px;"><div style="height:100%; width:${pct}%; background:var(--success);"></div></div>
+      <div class="card">${pending.map(row).join('') || ''}${done.map(row).join('')}</div>
+      ${allDone ? `<button class="primary" id="compileBtn" style="width:100%; margin-top:16px;">Compile and download zip</button>` : ''}
+      <button id="refreshBtn" style="width:100%; margin-top:10px;">Refresh list</button>
+      <button id="backLanding3" style="width:100%; margin-top:10px;">Back to start</button>
+      <p id="compileMsg" class="tiny" style="margin-top:10px;"></p>
+    `;
+    app.querySelectorAll('.row').forEach(r=>{
+      r.onclick = async ()=>{
+        const s = state.skus.find(x=>x.code===r.dataset.code);
+        state.activeCode = s.code;
+        if(s.photoCount){
+          const fresh = await skusCol(state.asn).doc(sanId(s.code)).get();
+          Object.assign(s, fresh.data());
+          state.screen = s.done ? 'review' : 'capture';
+        } else {
+          state.classifyFor = s; state.screen='classify';
+        }
+        render();
+      };
+    });
+    document.getElementById('refreshBtn').onclick = async ()=>{
+      state.skus = await loadSkus(state.asn);
+      render();
+    };
+    document.getElementById('backLanding3').onclick = ()=>{ state.screen='landing'; state.asn=''; state.skus=[]; render(); };
+    if(allDone){ document.getElementById('compileBtn').onclick = compileZip; }
+    return;
+  }
+
+  if(state.screen==='classify'){
+    const s = state.classifyFor;
+    const guess = guessPlug(s.desc) ? 5 : 3;
+    app.innerHTML = `
+      <div class="overlay">
+        <div class="modal">
+          <p class="tiny" style="margin:0 0 4px;">${esc2(s.code)}</p>
+          <p style="font-size:15px; font-weight:600; margin:0 0 14px;">${esc2(s.desc)}</p>
+          <p style="font-size:13px; margin:0 0 10px;">How many photos does this need?</p>
+          <div style="display:flex; gap:8px; margin-bottom:14px;">
+            <button id="opt3" style="flex:1; ${guess===3?'border-color:var(--accent); border-width:2px;':''}">3<br><span class="tiny">no plug</span></button>
+            <button id="opt5" style="flex:1; ${guess===5?'border-color:var(--accent); border-width:2px;':''}">5<br><span class="tiny">has plug</span></button>
+          </div>
+          <button id="cancelClassify" style="width:100%;">Cancel</button>
+        </div>
+      </div>`;
+    const go = async (n)=>{
+      const names = n===5?NAMES5:NAMES3;
+      const slots = names.map(name=>({name, assetId:null, url:null}));
+      await skusCol(state.asn).doc(sanId(s.code)).update({photoCount:n, slots});
+      s.photoCount = n; s.slots = slots.map(sl=>({...sl, filled:false}));
+      state.screen='capture'; render();
+    };
+    document.getElementById('opt3').onclick = ()=>go(3);
+    document.getElementById('opt5').onclick = ()=>go(5);
+    document.getElementById('cancelClassify').onclick = goToList;
+    return;
+  }
+
+  if(state.screen==='capture'){
+    const s = state.skus.find(x=>x.code===state.activeCode);
+    if(!s.slots || !s.slots.length || s.slots[0].filled===undefined){
+      s.slots = (s.slots||[]).map(sl=>({name:sl.name, assetId:sl.assetId, filled:!!sl.assetId, url:sl.url||null}));
+    }
+    const allFilled = s.slots.every(sl=>sl.filled && !sl.uploading && !sl.uploadError);
+    app.innerHTML = `
+      <p class="tiny" style="margin:0 0 2px;">${esc2(s.code)}</p>
+      <h1 style="margin-bottom:14px;">${esc2(s.desc)}</h1>
+      <div id="slots"></div>
+      <button class="primary" id="doneBtn" style="width:100%;" ${allFilled?'':'disabled'}>Done</button>
+      <p class="err" id="slotErr">Fill every slot before finishing.</p>
+      <button id="backList" style="width:100%; margin-top:10px;">Back to list</button>
+    `;
+    const slotsEl = document.getElementById('slots');
+    s.slots.forEach((sl,i)=>{
+      const d = document.createElement('div');
+      d.className = 'slot';
+      const statusTxt = sl.uploading ? 'Uploading...' : sl.uploadError ? (sl.savedLocally ? 'Saved to phone — not synced yet' : 'Upload failed') : sl.filled ? 'Captured — tap to retake' : 'Tap to shoot';
+      const actions = sl.uploadError
+        ? `<button class="small" data-retry="${i}">Retry sync</button>`
+        : (sl.filled ? `<button class="small" data-save="${i}">Save to phone</button>` : '');
+      d.innerHTML = `${sl.url?`<img src="${sl.url}">`:'<div class="ph">&#128247;</div>'}<div style="flex:1;"><p style="margin:0; font-size:13px;">${sl.name}</p><p class="tiny" style="margin:2px 0 0;">${statusTxt}</p></div>${actions}`;
+      const clickable = d.querySelector('img,.ph') || d;
+      clickable.onclick = (ev)=>{ ev.stopPropagation(); openCamera(i); };
+      slotsEl.appendChild(d);
+    });
+    slotsEl.querySelectorAll('[data-save]').forEach(btn=>{
+      btn.onclick = async (ev)=>{ ev.stopPropagation(); const i=+btn.dataset.save; const sl=s.slots[i]; if(sl.localOnly){ await saveToPhone(sl.localOnly, s.code+'_'+sl.name); } else if(sl.url){ try{ const r=await fetch(sl.url); const b=await r.blob(); await saveToPhone(b, s.code+'_'+sl.name); }catch(e){} } };
+    });
+    slotsEl.querySelectorAll('[data-retry]').forEach(btn=>{
+      btn.onclick = async (ev)=>{
+        ev.stopPropagation();
+        const i = +btn.dataset.retry;
+        const sl = s.slots[i];
+        if(!sl.localOnly) return;
+        sl.uploading = true; sl.uploadError = false; render();
+        try{
+          const up = await cap.assets.upload(sl.localOnly);
+          const fresh = await skusCol(state.asn).doc(sanId(s.code)).get();
+          const freshSlots = (fresh.data() && fresh.data().slots) ? fresh.data().slots : s.slots.map(x=>({name:x.name, assetId:x.assetId||null, url:x.url||null}));
+          freshSlots[i] = {name: sl.name, assetId: up.id, url: up.url};
+          await skusCol(state.asn).doc(sanId(s.code)).update({slots: freshSlots});
+          sl.assetId = up.id; sl.url = up.url; sl.uploading = false; sl.filled = true;
+        }catch(err){ sl.uploading = false; sl.uploadError = true; }
+        render();
+      };
+    });
+    document.getElementById('doneBtn').onclick = async ()=>{
+      if(!s.slots.every(sl=>sl.filled)){ document.getElementById('slotErr').style.display='block'; return; }
+      await skusCol(state.asn).doc(sanId(s.code)).update({done:true});
+      s.done = true; await goToList();
+    };
+    document.getElementById('backList').onclick = goToList;
+    return;
+  }
+
+  if(state.screen==='review'){
+    const s = state.skus.find(x=>x.code===state.activeCode);
+    app.innerHTML = `
+      <p class="tiny" style="margin:0 0 2px;">${esc2(s.code)}</p>
+      <h1 style="margin-bottom:14px;">${esc2(s.desc)}</h1>
+      <div class="grid3" id="thumbs"></div>
+      <button style="width:100%;" id="backBtn">Back to list</button>
+    `;
+    const th = document.getElementById('thumbs');
+    s.slots.forEach((sl,i)=>{
+      const url = sl.url || null;
+      const d = document.createElement('div');
+      d.className = 'thumb';
+      d.innerHTML = `${url?`<img src="${url}">`:''}<span class="lbl">${sl.name}</span>`;
+      d.onclick = ()=>{ state.reviewSlot=i; state.screen='photoView'; render(); };
+      th.appendChild(d);
+    });
+    document.getElementById('backBtn').onclick = goToList;
+    return;
+  }
+
+  if(state.screen==='photoView'){
+    const s = state.skus.find(x=>x.code===state.activeCode);
+    const sl = s.slots[state.reviewSlot];
+    const url = sl.url || null;
+    app.innerHTML = `
+      <div class="overlay">
+        <div class="modal" style="text-align:center;">
+          <div style="height:200px; background:var(--surface-2); border-radius:var(--radius); margin-bottom:12px; overflow:hidden;">
+            ${url?`<img src="${url}" style="width:100%; height:100%; object-fit:cover;">`:''}
+          </div>
+          <p style="font-size:13px; margin:0 0 14px;">${sl.name}</p>
+          <div style="display:flex; gap:8px;">
+            <button id="retakeBtn" style="flex:1;">Retake</button>
+            <button class="primary" id="doneViewBtn" style="flex:1;">Done</button>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('retakeBtn').onclick = ()=>{ openCamera(state.reviewSlot); state.screen='review'; };
+    document.getElementById('doneViewBtn').onclick = ()=>{ state.screen='review'; render(); };
+    return;
+  }
+}
+
+async function compileZip(){
+  const msg = document.getElementById('compileMsg');
+  msg.textContent = 'Fetching photos...';
+  try{
+    const zip = new JSZip();
+    const root = zip.folder(`ASN_${sanId(state.asn)}${state.container?('_'+sanId(state.container)):''}`);
+    for(const s of state.skus){
+      const folder = root.folder(sanId(s.code));
+      for(const sl of (s.slots||[])){
+        if(sl.url){
+          try{
+            const resp = await fetch(sl.url);
+            const blob = await resp.blob();
+            folder.file(sl.name.replace(/\s+/g,'_')+'.jpg', blob);
+          }catch(e){}
+        }
+      }
+    }
+    msg.textContent = 'Building zip...';
+    const blob = await zip.generateAsync({type:'blob'});
+    const filename = `ASN_${sanId(state.asn)}.zip`;
+    const downloads = cap.downloads;
+    if(downloads){
+      try{
+        await downloads.save({filename, data: blob});
+        msg.textContent = 'Saved.';
+      }catch(err){
+        msg.textContent = 'Could not save (' + (err && err.message || 'unknown') + ').';
+      }
+    } else {
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=u; a.download=filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      msg.textContent = 'Downloaded.';
+    }
+  }catch(e){
+    msg.textContent = 'Error building zip.';
+  }
+}
+
+(async ()=>{
+  try{
+    firebase.initializeApp(firebaseConfig);
+    cap.db = firebase.firestore();
+    // Let writes queue locally when the connection drops, and sync once it's back.
+    try{ await cap.db.enablePersistence({synchronizeTabs:true}); }catch(e){ /* not fatal - just no offline queue */ }
+  }catch(e){
+    app.innerHTML = '<p class="err" style="display:block;">Could not connect to the shared database. Check your internet connection and reload the page.</p>';
+    return;
+  }
+  cap.assets = { upload: cloudinaryUpload };
+  cap.downloads = { save: async ({filename, data})=>{ const ok = await localSave(filename, data); if(!ok) throw new Error('save failed'); } };
+  render();
+})();
+</script>
+</body>
+</html>
