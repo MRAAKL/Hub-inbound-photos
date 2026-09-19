@@ -228,6 +228,10 @@ fileInput.onchange = async (e)=>{
     s.slots[idx].assetId = up.id;
     s.slots[idx].url = up.url;
     s.slots[idx].uploading = false;
+    s.slots[idx].filled = true;
+    s.slots[idx].uploadError = false;
+    s.slots[idx].savedLocally = false;
+    s.slots[idx].localOnly = null;
   }catch(err){
     s.slots[idx].uploading = false;
     s.slots[idx].uploadError = true;
