@@ -146,18 +146,23 @@ async function localSave(filename, blob){
 }
 
 /* ---------- PDF parsing ---------- */
-async function extractPdfText(file){
+// pdf.js hands back text items in the order they were drawn in the PDF's
+// content stream, which is often NOT top-to-bottom/left-to-right reading
+// order (columns can be painted out of sequence, and a wrapped description's
+// second line can even appear after later columns of the same row). So
+// instead of just joining item strings, we keep each item's x/y position,
+// group items into visual lines by y, and — for the SKU table itself — bucket
+// each line's items into the correct column by x, using the header row's own
+// x-positions as the column boundaries. That lets a description that wraps
+// onto a second physical line still get appended to the right SKU instead of
+// being dropped or attached to the wrong row.
+async function extractPdfLines(file){
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({data:buf}).promise;
-  let text = '';
+  let allLines = [];
   for(let i=1;i<=pdf.numPages;i++){
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    // pdf.js returns text items in the order they were drawn in the PDF's
-    // content stream, which is often NOT top-to-bottom/left-to-right reading
-    // order (columns can be painted out of sequence). Rebuild real reading
-    // order by grouping items into lines by y-position, then sorting each
-    // line left-to-right by x-position, before joining into text.
     const items = content.items
       .map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }))
       .filter(it => it.str.trim().length > 0);
@@ -170,16 +175,91 @@ async function extractPdfText(file){
       line.items.push(it);
     }
     lines.sort((a,b)=> b.y - a.y);
-    for(const line of lines){
-      line.items.sort((a,b)=> a.x - b.x);
-      text += line.items.map(it=>it.str).join(' ') + '\n';
+    for(const line of lines) line.items.sort((a,b)=> a.x - b.x);
+    allLines.push(...lines);
+  }
+  return allLines;
+}
+function linesToText(lines){
+  return lines.map(l=>l.items.map(it=>it.str).join(' ')).join('\n');
+}
+
+// Column-based table parse, tuned against Hub's real "ASN List Report" layout
+// (header row: Line / Product Code / Description(1) / Pack Size / Org Qty
+// Ordered / Status / Qty Rcv / Pallet ID). Handles descriptions that wrap
+// onto a second line, and skips the repeating letterhead/footer on each page.
+function parseAsnTable(lines){
+  const headerIdx = lines.findIndex(l => {
+    const s = l.items.map(it=>it.str).join(' ');
+    return /Line/.test(s) && /Product\s*Code/i.test(s) && /Description/i.test(s);
+  });
+  if(headerIdx === -1) return [];
+  const header = lines[headerIdx];
+  const cols = {};
+  header.items.forEach(it=>{
+    const s = it.str.trim();
+    if(s === 'Line') cols.line = it.x;
+    else if(/Product\s*Code/i.test(s)) cols.productCode = it.x;
+    else if(/Description/i.test(s)) cols.desc = it.x;
+    else if(/Pack\s*Size/i.test(s)) cols.packSize = it.x;
+    else if(/Org\s*Qty/i.test(s)) cols.qty = it.x;
+    else if(/^Status$/i.test(s)) cols.status = it.x;
+    else if(/Qty\s*Rcv/i.test(s)) cols.qtyRcv = it.x;
+    else if(/Pallet\s*ID/i.test(s)) cols.pallet = it.x;
+  });
+  const colNames = Object.keys(cols).sort((a,b)=>cols[a]-cols[b]);
+  const bounds = colNames.map((name,i)=>({
+    name,
+    start: cols[name]-3,
+    end: i+1<colNames.length ? cols[colNames[i+1]]-3 : Infinity
+  }));
+  function assignCol(x){ for(const b of bounds){ if(x>=b.start && x<b.end) return b.name; } return null; }
+
+  const skus = [];
+  let current = null, inTable = false;
+  for(const line of lines){
+    const rowText = line.items.map(it=>it.str).join(' ').trim();
+    if(/ASN\s*LIST/i.test(rowText)){ inTable=false; current=null; continue; } // top of a new page's letterhead
+    if(/^Line\s+Product\s*Code/i.test(rowText)){ inTable=true; continue; }    // table header (repeats per page)
+    if(!inTable) continue;
+    if(/^Ordered$/i.test(rowText)) continue;
+    if(/^Total Qty Ordered/i.test(rowText)){ inTable=false; current=null; continue; }
+
+    const cells = {};
+    for(const it of line.items){
+      const col = assignCol(it.x);
+      if(!col) continue;
+      cells[col] = (cells[col] ? cells[col]+' ' : '') + it.str;
+    }
+    const leftText = ((cells.line||'')+' '+(cells.productCode||'')).trim();
+    const codeMatch = leftText.match(/(\d{7,10})/); // product code, even if fused with the line number
+    if(codeMatch){
+      current = {
+        code: codeMatch[1],
+        desc: (cells.desc||'').trim(),
+        packSize: (cells.packSize||'').trim(),
+        qty: (cells.qty||'').trim(),
+        status: (cells.status||'').trim()
+      };
+      skus.push(current);
+    } else if(current){
+      // continuation line (wrapped description) — only description carries over
+      if(cells.desc) current.desc += ' ' + cells.desc.trim();
+      if(!current.status && cells.status) current.status = cells.status.trim();
+      if(!current.qty && cells.qty) current.qty = cells.qty.trim();
+      if(!current.packSize && cells.packSize) current.packSize = cells.packSize.trim();
     }
   }
-  return text;
+  skus.forEach(s=>{
+    s.desc = s.desc.replace(/\s+/g,' ').trim();
+    s.qty = (s.qty||'').replace(/[^\d,]/g,'').replace(/,/g,'');
+    s.status = s.status || 'NM';
+  });
+  return skus.filter(s=>s.code);
 }
-function parseAsnText(text){
-  const asnMatch = text.match(/ASN\s*No\s*:?\s*(\d+)/i);
-  const containerMatch = text.match(/Container\s*No\s*:?\s*([A-Z]{4}\s?\d{6,7})/i);
+
+// Fallback for documents that don't match the expected column header layout.
+function parseAsnFallback(text){
   const skus = [];
   const re = /(\d{7,10})\s+([A-Za-z0-9][\w\-\/.,&+' ]{3,90}?)\s+(1\s*CTN\s*=\s*\d+\s*PCS)\s+([\d,]+)\s*PCS\b(?:[\s\S]{0,40}?\b(NM|NW|CL)\b)?/g;
   let m, seen = new Set();
@@ -189,6 +269,15 @@ function parseAsnText(text){
     seen.add(code);
     skus.push({code, desc:m[2].trim().replace(/\s+/g,' '), packSize:m[3].replace(/\s+/g,' '), qty:m[4].replace(/,/g,''), status:m[5]||'NM'});
   }
+  return skus;
+}
+
+function parseAsnLines(lines){
+  const text = linesToText(lines);
+  const asnMatch = text.match(/ASN\s*No\s*:?\s*(\d+)/i);
+  const containerMatch = text.match(/Container\s*No\s*:?\s*([A-Z]{4}\s?\d{6,7})/i);
+  let skus = parseAsnTable(lines);
+  if(!skus.length) skus = parseAsnFallback(text);
   return { asn: asnMatch?asnMatch[1]:'', container: containerMatch?containerMatch[1].replace(/\s+/g,''):'', skus };
 }
 
@@ -268,8 +357,8 @@ pdfInput.onchange = async (e)=>{
   const statusEl = document.getElementById('uploadStatus');
   if(statusEl) statusEl.textContent = 'Reading document...';
   try{
-    const text = await extractPdfText(f);
-    const parsed = parseAsnText(text);
+    const lines = await extractPdfLines(f);
+    const parsed = parseAsnLines(lines);
     if(!parsed.skus.length){ state.parseError = 'Could not find any SKU lines in this document. Add rows manually below.'; }
     else { state.parseError = ''; }
     state.extracted = parsed;
