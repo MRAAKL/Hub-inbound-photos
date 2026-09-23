@@ -153,7 +153,27 @@ async function extractPdfText(file){
   for(let i=1;i<=pdf.numPages;i++){
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    text += content.items.map(it=>it.str).join(' ') + '\n';
+    // pdf.js returns text items in the order they were drawn in the PDF's
+    // content stream, which is often NOT top-to-bottom/left-to-right reading
+    // order (columns can be painted out of sequence). Rebuild real reading
+    // order by grouping items into lines by y-position, then sorting each
+    // line left-to-right by x-position, before joining into text.
+    const items = content.items
+      .map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }))
+      .filter(it => it.str.trim().length > 0);
+    const lines = [];
+    const yTol = 2.5;
+    items.sort((a,b)=> b.y - a.y || a.x - b.x);
+    for(const it of items){
+      let line = lines.find(l => Math.abs(l.y - it.y) < yTol);
+      if(!line){ line = {y: it.y, items: []}; lines.push(line); }
+      line.items.push(it);
+    }
+    lines.sort((a,b)=> b.y - a.y);
+    for(const line of lines){
+      line.items.sort((a,b)=> a.x - b.x);
+      text += line.items.map(it=>it.str).join(' ') + '\n';
+    }
   }
   return text;
 }
